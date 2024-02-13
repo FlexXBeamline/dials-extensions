@@ -10,13 +10,12 @@ from packaging import version
 from scitbx.array_family import flex
 
 from dxtbx.nexus import _dataset_as_flex, get_detector_module_slices
-import dxtbx.format.FormatNXmxEigerFilewriter # WARNING... GOING TO MONKEY PATCH dxtbx.format.FormatNXmxEigerFilewriter.get_raw_data 
-
+from dxtbx.format.FormatNXmxEigerFilewriter import FormatNXmxEigerFilewriter 
 DATA_FILE_RE = re.compile(r"data_\d{6}")
 
-print('LOADED MODULE: FormatNXmxEigerFilewriterCHESS')
+print('LOADED CUSTOM DETECTOR FORMAT: FormatNXmxEigerFilewriterCHESS')
 
-class FormatNXmxEigerFilewriterCHESS(dxtbx.format.FormatNXmxEigerFilewriter.FormatNXmxEigerFilewriter):
+class FormatNXmxEigerFilewriterCHESS(FormatNXmxEigerFilewriter):
     _cached_file_handle = None
 
     @staticmethod
@@ -55,8 +54,34 @@ class FormatNXmxEigerFilewriterCHESS(dxtbx.format.FormatNXmxEigerFilewriter.Form
     def _goniometer(self):
         return self._goniometer_factory.known_axis((-1, 0, 0))
     
+    # COPIED FROM PARENT CLASS
+    def get_raw_data(self, index):
+        nxmx_obj = self._get_nxmx(self._cached_file_handle)
+        nxdata = nxmx_obj.entries[0].data[0]
+        nxdetector = nxmx_obj.entries[0].instruments[0].detectors[0]
 
-def get_raw_data_faster(
+        # Prefer bit_depth_image over bit_depth_readout since the former
+        # actually corresponds to the bit depth of the images as stored on
+        # disk. See also:
+        #   https://www.dectris.com/support/downloads/header-docs/nexus/
+        bit_depth = self._bit_depth_image or self._bit_depth_readout
+        raw_data = get_raw_data(nxdata, nxdetector, index, bit_depth)
+
+        if bit_depth:
+            # if 32 bit then it is a signed int, I think if 8, 16 then it is
+            # unsigned with the highest two values assigned as masking values
+            if bit_depth == 32:
+                top = 2**31
+            else:
+                top = 2**bit_depth
+            for data in raw_data:
+                d1d = data.as_1d()
+                d1d.set_selected(d1d == top - 1, -1)
+                d1d.set_selected(d1d == top - 2, -2)
+        return raw_data
+    
+
+def get_raw_data(
     nxdata: nxmx.NXdata,
     nxdetector: nxmx.NXdetector,
     index: int,
@@ -83,6 +108,3 @@ def get_raw_data_faster(
         )
         all_data.append(data_as_flex)
     return tuple(all_data)
-
-# WARNING, MONKEY PATCH HERE!
-dxtbx.format.FormatNXmxEigerFilewriter.get_raw_data = get_raw_data_faster
