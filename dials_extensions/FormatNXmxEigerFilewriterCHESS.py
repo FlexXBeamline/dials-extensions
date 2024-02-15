@@ -88,14 +88,17 @@ def get_raw_data(
     bit_depth: int | None = None,
 ) -> tuple[flex.float | flex.double | flex.int, ...]:
     
-    nimages = nxdetector._handle['detectorSpecific']['nimages'][()]
-    ntrigger = nxdetector._handle['detectorSpecific']['ntrigger'][()]
+    #nimages = nxdetector._handle['detectorSpecific']['nimages'][()]
+    #ntrigger = nxdetector._handle['detectorSpecific']['ntrigger'][()]
     data_keys = [k for k in sorted(nxdata.keys()) if DATA_FILE_RE.match(k)]
     
     nimages_per_file = nxdata.get(data_keys[0]).shape[0]
     nfiles = len(data_keys)
     
-    ind_array, ind_data = np.unravel_index(index, [nimages_per_file, nfiles], order='C')
+    ind_data, ind_array = np.unravel_index(index, [nfiles, nimages_per_file], order='C')
+    
+    #print(f'GET_RAW_DATA: index {index} --> {data_keys[ind_data]}[{ind_array}]')
+    
     data = nxdata[data_keys[ind_data]]
     
     all_data = []
