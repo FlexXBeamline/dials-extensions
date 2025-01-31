@@ -49,6 +49,15 @@ class FormatNXmxEigerFilewriterCHESS(FormatNXmxEigerFilewriter):
             #print('swapping module size')
             for module in nxdetector.modules:
                 module.data_size = module.data_size[::-1]
+
+        # After updating the detector API (on 2025-01-30), the depends_on is removed from fast_pixel_direction, slow_pixel_direction
+        # causing an assertion error here: https://github.com/cctbx/dxtbx/blob/8f8574de24ce0ca0c4ef39371cf24e58262883c5/src/dxtbx/nexus/__init__.py#L360
+        for module in nxdetector.modules:
+            if module.fast_pixel_direction.depends_on is None:
+                module.fast_pixel_direction.depends_on = module.module_offset.depends_on
+            if module.slow_pixel_direction.depends_on is None:
+                module.slow_pixel_direction.depends_on = module.module_offset.depends_on
+        
         return nxmx_obj
     
     def _goniometer(self):
