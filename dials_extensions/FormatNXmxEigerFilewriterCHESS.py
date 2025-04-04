@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import re
 
+import numpy as np
 import h5py
 import nxmx
 from packaging import version
 
-from dxtbx.format.FormatNXmxEigerFilewriter import FormatNXmxEigerFilewriter
+from scitbx.array_family import flex
 
+from dxtbx.nexus import _dataset_as_flex, get_detector_module_slices
+from dxtbx.format.FormatNXmxEigerFilewriter import FormatNXmxEigerFilewriter 
 DATA_FILE_RE = re.compile(r"data_\d{6}")
 
+print('LOADED CUSTOM DETECTOR FORMAT: FormatNXmxEigerFilewriterCHESS')
 
 class FormatNXmxEigerFilewriterCHESS(FormatNXmxEigerFilewriter):
     _cached_file_handle = None
@@ -45,7 +49,74 @@ class FormatNXmxEigerFilewriterCHESS(FormatNXmxEigerFilewriter):
             #print('swapping module size')
             for module in nxdetector.modules:
                 module.data_size = module.data_size[::-1]
+
+        # After updating the detector API (on 2025-01-30), the depends_on is removed from fast_pixel_direction, slow_pixel_direction
+        # causing an assertion error here: https://github.com/cctbx/dxtbx/blob/8f8574de24ce0ca0c4ef39371cf24e58262883c5/src/dxtbx/nexus/__init__.py#L360
+        for module in nxdetector.modules:
+            if module.fast_pixel_direction.depends_on is None:
+                module.fast_pixel_direction.depends_on = module.module_offset.depends_on
+            if module.slow_pixel_direction.depends_on is None:
+                module.slow_pixel_direction.depends_on = module.module_offset.depends_on
+        
         return nxmx_obj
     
     def _goniometer(self):
         return self._goniometer_factory.known_axis((-1, 0, 0))
+    
+    # COPIED FROM PARENT CLASS
+    def get_raw_data(self, index):
+        nxmx_obj = self._get_nxmx(self._cached_file_handle)
+        nxdata = nxmx_obj.entries[0].data[0]
+        nxdetector = nxmx_obj.entries[0].instruments[0].detectors[0]
+
+        # Prefer bit_depth_image over bit_depth_readout since the former
+        # actually corresponds to the bit depth of the images as stored on
+        # disk. See also:
+        #   https://www.dectris.com/support/downloads/header-docs/nexus/
+        bit_depth = self._bit_depth_image or self._bit_depth_readout
+        raw_data = get_raw_data(nxdata, nxdetector, index, bit_depth)
+
+        if bit_depth:
+            # if 32 bit then it is a signed int, I think if 8, 16 then it is
+            # unsigned with the highest two values assigned as masking values
+            if bit_depth == 32:
+                top = 2**31
+            else:
+                top = 2**bit_depth
+            for data in raw_data:
+                d1d = data.as_1d()
+                d1d.set_selected(d1d == top - 1, -1)
+                d1d.set_selected(d1d == top - 2, -2)
+        return raw_data
+    
+
+def get_raw_data(
+    nxdata: nxmx.NXdata,
+    nxdetector: nxmx.NXdetector,
+    index: int,
+    bit_depth: int | None = None,
+) -> tuple[flex.float | flex.double | flex.int, ...]:
+    
+    #nimages = nxdetector._handle['detectorSpecific']['nimages'][()]
+    #ntrigger = nxdetector._handle['detectorSpecific']['ntrigger'][()]
+    data_keys = [k for k in sorted(nxdata.keys()) if DATA_FILE_RE.match(k)]
+    
+    nimages_per_file = nxdata.get(data_keys[0]).shape[0]
+    nfiles = len(data_keys)
+    
+    ind_data, ind_array = np.unravel_index(index, [nfiles, nimages_per_file], order='C')
+    
+    #print(f'GET_RAW_DATA: index {index} --> {data_keys[ind_data]}[{ind_array}]')
+    
+    data = nxdata[data_keys[ind_data]]
+    
+    all_data = []
+    sliced_outer = data[ind_array]
+    
+    # the following is the same as in parent class (necessary?)
+    for module_slices in get_detector_module_slices(nxdetector):
+        data_as_flex = _dataset_as_flex(
+            sliced_outer, tuple(module_slices), bit_depth=bit_depth
+        )
+        all_data.append(data_as_flex)
+    return tuple(all_data)

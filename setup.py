@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name='dials-extensions',
     packages=["dials_extensions"],
-    version='0.0.1',
+    version='0.0.3',
     description='DIALS extensions for CHESS beamline ID7B2',
     author='Steve P. Meisburger',
     author_email='spm82@cornell.edu',
